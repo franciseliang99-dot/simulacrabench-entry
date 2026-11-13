@@ -1,0 +1,238 @@
+%% SimulacraBench Technical Report -- team franciseliang
+%% Built on the organizers' report template (section skeleton kept as required).
+%% Needs neurips_2026.sty next to this file, from
+%% https://media.neurips.cc/Conferences/NeurIPS2026/Formatting_Instructions_For_NeurIPS_2026.zip
+%% Build: tectonic -X compile report.tex  (main text ends on page 4 as of 2026-11-13)
+%%
+%% DRAFT. Everything in \todo{...} must be filled before upload:
+%%   * author block (name/affiliation as shown on the competition account)
+%%   * Section 3 test-phase numbers (must equal the Final-phase leaderboard row)
+%%   * Section 4 repository URL + commit hash
+%% Development numbers below are from submission #1016401 (2026-10-28).
+
+\documentclass{article}
+\usepackage[final]{neurips_2026}
+% The 2026 style only defines the footer track name through a track option
+% (main, eandd, ...); none fits a competition report, so name it here.
+\makeatletter\providecommand{\@trackname}{NeurIPS 2026 Competition Track: SimulacraBench technical report.}\makeatother
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+\newcommand{\teamid}{franciseliang}
+% Identity and publication details live in an untracked meta_override.tex
+% (\renewcommand of the macros below); without it the report builds with TODOs.
+\newcommand{\authorname}{\todo{author name as on the competition account}}
+\newcommand{\authoremail}{\todo{contact e-mail}}
+\newcommand{\coderepo}{\todo{public repository URL}}
+\newcommand{\codecommit}{\todo{commit}}
+\newcommand{\zipsha}{\todo{full sha256 of submission.zip}}
+\IfFileExists{meta_override.tex}{\input{meta_override.tex}}{}
+
+\newcommand{\cbox}{$\square$}
+\newcommand{\cboxchecked}{$\boxtimes$}
+
+\title{SimulacraBench Technical Report:\\ Per-Item Model Selection by Run-Time Cross-Validation, with a Gate-Factored Model and a Question-Wording Prior}
+
+\author{%
+  \authorname\\
+  Independent\\
+  \texttt{\authoremail}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}
+\begin{tabular}{l}
+\toprule
+\textbf{Team ID:} \teamid \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{abstract}
+The score is a per-cell log score, so the best answer for each blank cell is the conditional distribution of that answer given the respondent's visible (GIVEN) answers. We cannot see the real data offline, so every modelling decision is made inside \texttt{predict()}, on the visible rows of the frame the grader passes in. We run 3-fold cross-validation there and score each candidate with the grader's own floored log score. For each item we then choose blend weights over four candidates: a smoothed crowd marginal, a per-item multinomial logistic regression, one multi-task neural network per instrument, and, for gated items, a gate-factored model $P(\text{asked})\cdot P(\text{answer}\mid\text{asked})$. A variant of the network shares output weights through a frozen sentence embedding of the question and option wording (all-MiniLM-L6-v2, embeddings precomputed from the public schemas). It replaces the plain network on an instrument only if it wins out of fold by two standard errors. The marginal is always on the blend grid, so in validation no item does worse than the baseline. Test-phase skill (Grand Prize): \todo{x.xx}.
+\end{abstract}
+
+%% ---------------------------------------------------------------------------
+\section{Method summary}
+\label{sec:method}
+
+\subsection{Method type}
+
+\begin{table}[h]
+  \centering
+  \small
+  \begin{tabular}{@{}cp{0.42\linewidth}cp{0.42\linewidth}@{}}
+    \toprule
+    \cbox & LLM-simulated respondents (prompting, personas) & \cbox & Fine-tuned language model \\
+    \cbox & Tabular / conditional generative model (e.g.\ VAE, diffusion, GAN, CTGAN) & \cboxchecked & Supervised prediction (GBDT, neural net, linear/GLM) \\
+    \cbox & Bayesian / hierarchical / multilevel model & \cbox & Small-area estimation or post-stratification (e.g.\ MRP) \\
+    \cbox & Reweighting, raking, or calibration of the released sample & \cbox & Imputation / matching / nearest-neighbour \\
+    \cbox & Retrieval over released or external microdata & \cbox & Agent-based or mechanistic simulation \\
+    \cboxchecked & Ensemble or stacking of multiple components & \cboxchecked & Other: frozen text embedding of item wording as an output-layer prior \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\emph{Supervised prediction:} logistic regression and a multi-task MLP, both fitted on the visible rows at run time. \emph{Ensemble:} per-item convex blend chosen on out-of-fold predictions. \emph{Other:} the question/option wording enters as fixed vectors in the network's output layer (\S\ref{sec:model}).
+
+\subsection{Pipeline}
+\label{sec:pipeline}
+\texttt{predict(frame, schema)} is called once per instrument. Visible rows are the respondents with no blank cell; hidden rows are those with blanks. Per instrument:
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+  \item Build a one-hot design matrix over the GIVEN items, using the levels listed in the schema.
+  \item Split the visible rows into 3 folds (fixed seed). Row roles were assigned by a seeded random shuffle, so random folds imitate the hidden split.
+  \item For each PREDICT item, fit the candidates (\S\ref{sec:model}) on each fold's training part and predict its held-out part. This gives out-of-fold (OOF) probabilities for every visible cell.
+  \item Score candidates and blends with the grader's transform $p = 10^{-3} + (1-K\cdot10^{-3})\,q/\sum q$ followed by the log score. Pick per-item blend weights (\S\ref{sec:agg}).
+  \item Produce hidden-row predictions with the chosen weights and emit them in the canonical order: rows top to bottom, items in schema order, plus the gate slot where the item is gated.
+\end{enumerate}
+The design follows stacking on held-out predictions \citep{wolpert1992stacked} and uses proper scoring \citep{gneiting2007strictly} as the only selection criterion. The development leaderboard is Laplace-noised and rounded, so we never tuned on it.
+
+\subsection{Inputs and feature construction}
+\textbf{Used:} the GIVEN items, one-hot over their schema levels (a missing GIVEN value is an all-zero block); each PREDICT item's visible answers as targets; the gate definitions (\texttt{parent}, \texttt{observed\_if}) as features for the gate-factored model only; the question and option labels from the schema, for the text prior. \textbf{Not used:} no survey weights (the metric is an unweighted mean over cells) and no external data. We do not hand-code gate rules: the UNHCR schema notes that some items are routed on two parents but name only the first, so a gate read literally can be wrong. Whether an item was asked is always learned.
+
+Text vectors: for each item and option we embed the string \texttt{"Question: <label>\textbackslash nAnswer: <option>"}, and gated items get an extra ``was not asked'' option. The vectors are computed offline from the three public schemas and shipped with the submission, keyed by the SHA-256 of each string. If any string of an instrument is not in the bundle (for example because the test schema rewords an item), that whole instrument switches to a character n-gram TF-IDF + SVD (64 dimensions) embedding of the same strings. This keeps every instrument in a single embedding space.
+
+\subsection{Model or simulator}
+\label{sec:model}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+  \item \textbf{M0, smoothed marginal:} visible counts $+\alpha$, $\alpha\in\{0.1,0.5,2\}$ chosen per item on the folds.
+  \item \textbf{M1, logistic regression:} per-item multinomial logistic regression on the GIVEN one-hot, $C\in\{0.1,0.5,2\}$ chosen per item, at most 200 L-BFGS iterations \citep{pedregosa2011scikit}.
+  \item \textbf{M2, multi-task network:} one MLP per instrument (input $\to$ 256 $\to$ 256, ReLU, dropout 0.2) with a masked softmax head for every PREDICT item, trained jointly on the summed per-item negative log-likelihood \citep{caruana1997multitask}. Sharing the trunk pools strength across items; UNHCR has 213 PREDICT items.
+  \item \textbf{M2t, wording prior:} M2 whose logit for (item $j$, option $v$) gains $h(x)^\top P\, t_{j,v}$, where $h$ is the last hidden layer, $t_{j,v}$ the frozen 384-d sentence vector \citep{reimers2019sentence,wang2020minilm} and $P$ a learned projection. The free per-item output weights get heavy decoupled weight decay (1.0 vs.\ $10^{-4}$ elsewhere), so items with few answers lean on items with similar wording.
+  \item \textbf{M3, gate-factored:} for a gated item with sentinel option \texttt{NA\_GATED}, $P(\texttt{NA\_GATED})=1-P(\text{asked})$ and $P(v)=P(\text{asked})\,P(v\mid\text{asked})$. $P(\text{asked})$ is a logistic regression on the GIVEN one-hot plus the probability (and its logit) that the gate parent holds an opening value. That probability is the visible one-hot when the parent is GIVEN, or a logistic-regression prediction when the parent is itself predicted. $P(v\mid\text{asked})$ is fitted on asked rows only.
+\end{itemize}
+Structural assumption: cells are scored independently, so we only model per-cell conditionals given GIVEN. A respondent's other predicted answers are never conditioned on, and the joint distribution is not modelled.
+
+\subsection{Fitting, training, or prompting}
+Everything is fitted at run time on the visible rows of the frame passed to \texttt{predict()} (TRAIN rows in development; TRAIN+DEV in the final phase). The organizers confirmed by e-mail that this is allowed. Networks use AdamW \citep{loshchilov2019decoupled} (lr $3\cdot10^{-3}$, batch 256, $\le$60 epochs) with early stopping (patience 5) on a 10\% split inside each fold's training part, on the GPU when one is present. Hyperparameter grids ($\alpha$, $C$, blend weights) are selected on the OOF log score.
+
+\emph{Leakage control for M3.} When the gate parent is predicted, a plain OOF parent prediction would leak: on the child's training rows it comes from models that saw the held-out rows' parent answers, and the child's gate is nearly a function of those answers. On the synthetic sandbox this inflated the child's validation score by $+0.011$ log score per row, enough to win the blend. So for each outer fold the parent feature is rebuilt from a 2-fold split inside that fold's training part. Held-out rows get the mean of the two half-models, so the feature has the same calibration on both sides.
+
+\subsection{Prediction and aggregation}
+\label{sec:agg}
+For each item we search convex weights $(w_0,w_1,w_2,w_3)$ over $\{0,0.1,\dots,1\}$ on (M0, M1, M2-or-M2t, M3), skipping components that are unavailable, and keep the weights that maximize the OOF graded log score. Because $(1,0,0,0)$ is on the grid, no item does worse in validation than the smoothed marginal. Hidden-row predictions are blends of: M0, M1 and M3 refitted on all visible rows; and, for the networks, the average of the three fold networks (a refit with an extrapolated epoch count scored 0.003--0.007 per cell worse on control data). \emph{M2 vs.\ M2t} is decided once per instrument: M2t replaces M2 only if its OOF log score per row, paired over rows, is higher by at least two standard errors. Deciding per item, or on any positive gain, let fold noise choose M2t on a control where the wording was unrelated to the answers, and cost 0.001--0.005 per cell. Survey weights are not used.
+
+\subsection{Post-processing and calibration (if applicable)}
+No separate calibration step. Outputs are clipped to be non-negative, have $10^{-9}$ added, and are renormalized by the grader. Items whose visible answers contain values outside the schema fall back to the marginal of the in-schema values. A failing worker pool reruns sequentially; a candidate that raises is dropped for that item. Past a per-instrument wall-clock budget of 240\,s, the remaining candidates are skipped. The networks (M2, M2t) start only before 50\% of it, M2t must finish by 70\%, and M3 starts only before 70\%. In the worst case an instrument returns M0.
+
+%% ---------------------------------------------------------------------------
+\section{Models, data, and compute}
+\label{sec:resources}
+
+\paragraph{Pretrained models and off-the-shelf components.}
+
+\begin{table}[h]
+  \centering
+  \small
+  \caption{Pretrained models and off-the-shelf components.}
+  \label{tab:models}
+  \begin{tabular}{@{}p{0.33\linewidth}p{0.27\linewidth}p{0.34\linewidth}@{}}
+    \toprule
+    Component & Version / checkpoint & Role in pipeline  \\
+    \midrule
+    sentence-transformers/ all-MiniLM-L6-v2 & commit \texttt{1110a243}$^{\ast}$ (Apache-2.0) & frozen item/option text vectors, precomputed offline, shipped in \texttt{text\_emb.npz} \\
+    scikit-learn & image default & logistic regression (M1, M3) \\
+    PyTorch & image default & multi-task network (M2, M2t) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+$^{\ast}$Full commit: \texttt{1110a243fdf4706b3f48f1d95db1a4f5529b4d41}. No model is downloaded at run time and nothing is listed in \texttt{models.txt}. The encoder is only used offline to produce the 1.2\,MB vector bundle.
+
+\paragraph{Data.} Development used only the organizers' public starter kit: the three schemas and the synthetic sandbox generator. We used them for correctness tests, timing, and control experiments. The real microdata are never visible offline; at run time only the frame passed to \texttt{predict()} is used.
+
+\begin{table}[h]
+  \centering
+  \caption{External datasets used.}
+  \label{tab:external}
+  \begin{tabular}{llll}
+    \toprule
+    Dataset & Source / URL & Size & Use in pipeline \\
+    \midrule
+    None & -- & -- & -- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Compute.} One H100 (grader); the network uses the GPU if present. Wall clock is capped at 240\,s per instrument.
+
+%% ---------------------------------------------------------------------------
+\section{Results}
+\label{sec:results}
+
+\subsection{Test-phase leaderboard results}
+
+\begin{table}[h]
+  \centering
+  \caption{Official SimulacraBench results for team \teamid{} (skill; 0 = crowd marginal, 1 = perfect). Development scores are Laplace-noised by the organizers.}
+  \label{tab:results}
+  \begin{tabular}{lrrrr}
+    \toprule
+    Split & Grand Prize & UNICEF & World Bank & UNHCR \\
+    \midrule
+    Development (\#1016401) & 0.43 & 0.35 & 0.23 & 0.71 \\
+    Test        & \todo{} & \todo{} & \todo{} & \todo{} \\
+    Organizer baseline (test) & \todo{} & \todo{} & \todo{} & \todo{} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Breakdown by population, survey, or question type}
+The leaderboard reports skill per instrument. In development our weakest instrument is World Bank (0.23). It has the most options per item (mean 8.2) and the fewest visible rows (5,195 TRAIN). Our gap to the best development entries is largest on UNHCR (top entries show 0.88 against our 0.71). UNHCR has 156 gated PREDICT items and only one of them has a GIVEN parent, so routing must be predicted. We read this as joint structure across a respondent's answers that a per-cell model conditioned on GIVEN does not capture. \todo{update with test-phase breakdown}
+
+%% ---------------------------------------------------------------------------
+\section{Reproducibility}
+\label{sec:repro}
+
+\begin{itemize}[leftmargin=*]
+  \item Code repository: \coderepo{} (licence: MIT).
+  \item Commit hash used for the test-phase submission: \texttt{\codecommit}. Submission archive SHA-256: \texttt{\zipsha}.
+  \item Command to reproduce the submission file: \texttt{zip -j -X submission.zip submission/main.py submission/text\_emb.npz}. The archive contains exactly these two files. To regenerate the vector bundle: \texttt{python tools/build\_text\_prior.py <starter-kit>/data} (needs \texttt{sentence-transformers} and one download of the pinned checkpoint). Predictions are a deterministic function of the frame given to \texttt{predict()}, apart from GPU nondeterminism in network training (fixed seeds; deterministic algorithms are requested with \texttt{warn\_only}).
+  \item Environment: the organizers' evaluation image (Python 3.13) with its preinstalled numpy, pandas, scipy, scikit-learn, joblib and PyTorch; no \texttt{requirements.txt}. Local checks used the official starter kit (\texttt{check\_submission\_zip.py}, \texttt{score.py}).
+  \item Pretrained weights: only all-MiniLM-L6-v2 at the commit above, public on Hugging Face. Its outputs are bundled, so running the submission does not need the weights.
+\end{itemize}
+
+%% ---------------------------------------------------------------------------
+\section{Limitations}
+\label{sec:limitations}
+
+The method models each cell given the GIVEN block only, so it cannot use dependence among a respondent's other unanswered items. That dependence is probably where the remaining UNHCR gap lies. All selection rests on 3-fold cross-validation over the visible rows. Choosing the blend weights and the smoothing/regularization values on the same OOF predictions makes validation scores slightly optimistic, and the effect is small. The wording prior was validated only on synthetic controls (5 of 6 positive-control runs improved, mean $+0.0021$ per cell; on negative controls it was rejected in 5 of 6 runs), so whether it helps on the real data is decided per run and is not known in advance.
+
+%% ---------------------------------------------------------------------------
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+%% ---------------------------------------------------------------------------
+\clearpage
+\appendix
+
+\section{Full configuration}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Prompts:} none (no language model is prompted). Text strings embedded: \texttt{"Question: \{label\}\textbackslash nAnswer: \{option\}"} for every item/option of the public schemas, plus a ``was not asked'' option string for gated items. The exact builder is \texttt{\_option\_texts()} in \texttt{main.py}.
+  \item \textbf{Folds:} 3, rows assigned by a seeded permutation (seed 0), fold $f$ = every third row of the permutation.
+  \item \textbf{M0:} $\alpha\in\{0.1,0.5,2.0\}$. \textbf{M1:} $C\in\{0.1,0.5,2.0\}$, \texttt{max\_iter}=200. \textbf{M3:} both regressions $C=0.5$; parent feature = opening-value probability and its logit, clipped to $[10^{-3},1-10^{-3}]$.
+  \item \textbf{M2/M2t:} hidden 256$\times$2, ReLU, dropout 0.2, AdamW lr $3\cdot10^{-3}$, weight decay $10^{-4}$ (M2t free output weights: 1.0), batch 256, max 60 epochs, patience 5, inner validation 10\%. Hidden-row prediction = mean of the 3 fold networks. M2t selection threshold: paired per-row OOF gain $>2$ standard errors.
+  \item \textbf{Blend grid:} step 0.1 over the simplex of (M0, M1, M2/M2t, M3).
+  \item \textbf{Budget:} 240\,s per instrument; M2 and M2t start only before 50\% (M2t deadline 70\%), M3 only before 70\%; past the budget, items return M0.
+  \item \textbf{Scoring inside \texttt{predict()}:} grader floor $10^{-3}$, renormalize-and-mix as in the official \texttt{config.yml}.
+\end{itemize}
+
+\section{(Optional) Additional results}
+Synthetic-control experiment for the wording prior (UNHCR-shaped data, $n\in\{800,3000\}$, 3 seeds each). Positive control (answers generated from the real wording vectors): 5 of 6 runs improved, 1 run $-0.0001$, mean $+0.0021$ per cell. Negative control (answers generated from random vectors): M2 was kept in 5 of 6 runs. Without the 2-standard-error margin, two negative-control runs chose M2t and lost $0.0007$ and $0.0025$ per cell.
+
+\end{document}

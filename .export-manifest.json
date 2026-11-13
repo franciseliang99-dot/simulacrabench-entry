@@ -1,0 +1,65 @@
+{
+  "schema": 3,
+  "entry_id": "entries/simulacrabench",
+  "source": "entry-repo",
+  "signature_digest": "8fab87b3fc854f526195c76a66659df3a175ae4fdfbcd0a41e5b25f16910421e",
+  "file_count": 7,
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "c0a6651532c3502d789b307ba343f39a6fc0a42c5161efb85eac966e895a031f",
+      "rule": "exact-file",
+      "keys": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "README.md",
+      "sha256": "d5453188026ec7ad802adf0b75d5d742435ec4828c204ba7ed6a85dff6115b20",
+      "rule": "exact-file",
+      "keys": [
+        "README.md"
+      ]
+    },
+    {
+      "path": "submission/main.py",
+      "sha256": "79cfee7cfe92bccd8021d4737a321ccf6dc964bde941bac0679e1a751b00a28c",
+      "rule": "exact-file",
+      "keys": [
+        "submission/main.py"
+      ]
+    },
+    {
+      "path": "submission/text_emb.npz",
+      "sha256": "e1ba560f4addb193b5e656215bc43777c637758f3b3591b6d8d347a374ed2b11",
+      "rule": "exact-file",
+      "keys": [
+        "submission/text_emb.npz"
+      ]
+    },
+    {
+      "path": "tools/build_text_prior.py",
+      "sha256": "d2833c6aa1da1fc402e6515502d6d0b02f9787f3152681927c9704e5907a67a0",
+      "rule": "exact-file",
+      "keys": [
+        "tools/build_text_prior.py"
+      ]
+    },
+    {
+      "path": "writeup/refs.bib",
+      "sha256": "2dfb06ef6915a61491f651fbeef3409ad7b76b831770580c6cb53b9a39ae9575",
+      "rule": "exact-file",
+      "keys": [
+        "writeup/refs.bib"
+      ]
+    },
+    {
+      "path": "writeup/report.tex",
+      "sha256": "b668f58aedecb6555d83bc6db2991da4b9f8ef24b11c8eb15a792eb9ebb92425",
+      "rule": "exact-file",
+      "keys": [
+        "writeup/report.tex"
+      ]
+    }
+  ]
+}
