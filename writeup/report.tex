@@ -65,7 +65,7 @@
 \end{center}
 
 \begin{abstract}
-The score is a per-cell log score, so the best answer for each blank cell is the conditional distribution of that answer given the respondent's visible (GIVEN) answers. We cannot see the real data offline, so every modelling decision is made inside \texttt{predict()}, on the visible rows of the frame the grader passes in. We run 3-fold cross-validation there and score each candidate with the grader's own floored log score. For each item we then choose blend weights over four candidates: a smoothed crowd marginal, a per-item multinomial logistic regression, one multi-task neural network per instrument, and, for gated items, a gate-factored model $P(\text{asked})\cdot P(\text{answer}\mid\text{asked})$. A variant of the network shares output weights through a frozen sentence embedding of the question and option wording (all-MiniLM-L6-v2, embeddings precomputed from the public schemas). It replaces the plain network on an instrument only if it wins out of fold by two standard errors. The marginal is always on the blend grid, so in validation no item does worse than the baseline. Test-phase skill (Grand Prize): \todo{x.xx}.
+The score is a per-cell log score, so the best answer for each blank cell is the conditional distribution of that answer given the respondent's visible (GIVEN) answers. We cannot see the real data offline, so every modelling decision is made inside \texttt{predict()}, on the visible rows of the frame the grader passes in. We run 3-fold cross-validation there and score each candidate with the grader's own floored log score. For each item we then choose blend weights over four candidates: a smoothed crowd marginal, a per-item multinomial logistic regression, one multi-task neural network per instrument, and, for gated items, a gate-factored model $P(\text{asked})\cdot P(\text{answer}\mid\text{asked})$. A variant of the network shares output weights through a frozen sentence embedding of the question and option wording (all-MiniLM-L6-v2, embeddings precomputed from the public schemas). It replaces the plain network on an instrument only if it wins out of fold by two standard errors. The marginal is always on the blend grid, so in validation no item does worse than the baseline. Test-phase skill (Grand Prize): 0.43.
 \end{abstract}
 
 %% ---------------------------------------------------------------------------
@@ -186,14 +186,13 @@ $^{\ast}$Full commit: \texttt{1110a243fdf4706b3f48f1d95db1a4f5529b4d41}. No mode
     Split & Grand Prize & UNICEF & World Bank & UNHCR \\
     \midrule
     Development (\#1016401) & 0.43 & 0.35 & 0.23 & 0.71 \\
-    Test        & \todo{} & \todo{} & \todo{} & \todo{} \\
-    Organizer baseline (test) & \todo{} & \todo{} & \todo{} & \todo{} \\
+    Test (\#1054150) & 0.43 & 0.34 & 0.23 & 0.73 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \subsection{Breakdown by population, survey, or question type}
-The leaderboard reports skill per instrument. In development our weakest instrument is World Bank (0.23). It has the most options per item (mean 8.2) and the fewest visible rows (5,195 TRAIN). Our gap to the best development entries is largest on UNHCR (top entries show 0.88 against our 0.71). UNHCR has 156 gated PREDICT items and only one of them has a GIVEN parent, so routing must be predicted. We read this as joint structure across a respondent's answers that a per-cell model conditioned on GIVEN does not capture. \todo{update with test-phase breakdown}
+The leaderboard reports skill per instrument. In development our weakest instrument is World Bank (0.23). It has the most options per item (mean 8.2) and the fewest visible rows (5,195 TRAIN). Our gap to the best development entries is largest on UNHCR (top entries show 0.88 against our 0.71). UNHCR has 156 gated PREDICT items and only one of them has a GIVEN parent, so routing must be predicted. We read this as joint structure across a respondent's answers that a per-cell model conditioned on GIVEN does not capture. The test split shows the same pattern: World Bank is again weakest (0.23), and on UNHCR we score 0.73 while most entries on the test leaderboard at the time of writing score 0.85--0.88.
 
 %% ---------------------------------------------------------------------------
 \section{Reproducibility}
@@ -201,8 +200,12 @@ The leaderboard reports skill per instrument. In development our weakest instrum
 
 \begin{itemize}[leftmargin=*]
   \item Code repository: \coderepo{} (licence: MIT).
-  \item Commit hash used for the test-phase submission: \texttt{\codecommit}. Submission archive SHA-256: \texttt{\zipsha}.
-  \item Command to reproduce the submission file: \texttt{zip -j -X submission.zip submission/main.py submission/text\_emb.npz}. The archive contains exactly these two files. To regenerate the vector bundle: \texttt{python tools/build\_text\_prior.py <starter-kit>/data} (needs \texttt{sentence-transformers} and one download of the pinned checkpoint). Predictions are a deterministic function of the frame given to \texttt{predict()}, apart from GPU nondeterminism in network training (fixed seeds; deterministic algorithms are requested with \texttt{warn\_only}).
+  \item Commit used for the test-phase submission, and SHA-256 of the submitted archive:\\
+    {\footnotesize\texttt{\codecommit}}\\
+    {\footnotesize\texttt{\zipsha}}
+  \item Command to reproduce the submission file:\\
+    {\footnotesize\texttt{zip -j -X submission.zip submission/main.py submission/text\_emb.npz}}\\
+    The archive contains exactly these two files. To regenerate the vector bundle: \texttt{python tools/build\_text\_prior.py <starter-kit>/data} (needs \texttt{sentence-transformers} and one download of the pinned checkpoint). Predictions are a deterministic function of the frame given to \texttt{predict()}, apart from GPU nondeterminism in network training (fixed seeds; deterministic algorithms are requested with \texttt{warn\_only}).
   \item Environment: the organizers' evaluation image (Python 3.13) with its preinstalled numpy, pandas, scipy, scikit-learn, joblib and PyTorch; no \texttt{requirements.txt}. Local checks used the official starter kit (\texttt{check\_submission\_zip.py}, \texttt{score.py}).
   \item Pretrained weights: only all-MiniLM-L6-v2 at the commit above, public on Hugging Face. Its outputs are bundled, so running the submission does not need the weights.
 \end{itemize}
@@ -211,7 +214,7 @@ The leaderboard reports skill per instrument. In development our weakest instrum
 \section{Limitations}
 \label{sec:limitations}
 
-The method models each cell given the GIVEN block only, so it cannot use dependence among a respondent's other unanswered items. That dependence is probably where the remaining UNHCR gap lies. All selection rests on 3-fold cross-validation over the visible rows. Choosing the blend weights and the smoothing/regularization values on the same OOF predictions makes validation scores slightly optimistic, and the effect is small. The wording prior was validated only on synthetic controls (5 of 6 positive-control runs improved, mean $+0.0021$ per cell; on negative controls it was rejected in 5 of 6 runs), so whether it helps on the real data is decided per run and is not known in advance.
+Each cell is modelled from the GIVEN block only, so dependence among a respondent's other unanswered items goes unused; that is probably where the remaining UNHCR gap lies. Tuning blend weights and smoothing on the same 3-fold OOF predictions makes validation scores slightly optimistic. The wording prior was validated only on synthetic controls (improved 5 of 6 positive runs, mean $+0.0021$ per cell; rejected in 5 of 6 negative runs), so its value on the real data is decided per run.
 
 %% ---------------------------------------------------------------------------
 \bibliographystyle{plainnat}
